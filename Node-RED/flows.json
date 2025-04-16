@@ -1,0 +1,392 @@
+[
+    {
+        "id": "948243a3.6a4c2",
+        "type": "tab",
+        "label": "Thermal Image",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "7f0330d.502b7d",
+        "type": "mqtt in",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "topic": "home/sensor/thermal",
+        "qos": "2",
+        "datatype": "auto",
+        "broker": "f8e2cb589717620c",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 140,
+        "y": 400,
+        "wires": [
+            [
+                "5ff1fcf0.3046e4",
+                "cb9daecb.6bbc4"
+            ]
+        ]
+    },
+    {
+        "id": "5ff1fcf0.3046e4",
+        "type": "debug",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 750,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "cb9daecb.6bbc4",
+        "type": "function",
+        "z": "948243a3.6a4c2",
+        "name": "Render image",
+        "func": "let camColors = [\"#0000FF\", \"#00FFFF\", \"#FFFF00\", \"#FF0000\", \"#800080\"]; // Blue -> Cyan -> Yellow -> Red -> Purple\nlet MINTEMP = 15.0;\nlet MAXTEMP = 100.0;\n\nfunction interpolateColor(value, min, max, colors) {\n    let range = max - min;\n    let scaledValue = (value - min) / range;\n    let numColors = colors.length;\n    let scaledIndex = scaledValue * (numColors - 1);\n    let lowerIndex = Math.floor(scaledIndex);\n    let upperIndex = Math.ceil(scaledIndex);\n    let ratio = scaledIndex - lowerIndex;\n\n    let color1 = hexToRgb(colors[lowerIndex]);\n    let color2 = hexToRgb(colors[upperIndex]);\n\n    let r = Math.round(color1.r + ratio * (color2.r - color1.r));\n    let g = Math.round(color1.g + ratio * (color2.g - color1.g));\n    let b = Math.round(color1.b + ratio * (color2.b - color1.b));\n\n    return rgbToHex(r, g, b);\n}\n\nfunction hexToRgb(hex) {\n    let bigint = parseInt(hex.replace(/^#/, ''), 16);\n    return {\n        r: (bigint >> 16) & 255,\n        g: (bigint >> 8) & 255,\n        b: bigint & 255\n    };\n}\n\nfunction rgbToHex(r, g, b) {\n    return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();\n}\n\nfunction expand8x8to28x28(matrix8x8) {\n    let matrix28x28 = Array.from({ length: 28 }, () => Array(28).fill(0));\n\n    let xRatio = (8 - 1) / (28 - 1);\n    let yRatio = (8 - 1) / (28 - 1);\n\n    for (let i = 0; i < 28; i++) {\n        for (let j = 0; j < 28; j++) {\n            let x = j * xRatio;\n            let y = i * yRatio;\n\n            let x1 = Math.floor(x);\n            let y1 = Math.floor(y);\n\n            let x2 = x1 + 1;\n            let y2 = y1 + 1;\n\n            if (x2 >= 8) x2 = 7;\n            if (y2 >= 8) y2 = 7;\n\n            let xRatioLerp = x - x1;\n            let yRatioLerp = y - y1;\n\n            matrix28x28[i][j] = bilinearInterpolation(matrix8x8, xRatioLerp, yRatioLerp, x1, y1, x2, y2);\n        }\n    }\n\n    return matrix28x28;\n}\n\nfunction bilinearInterpolation(value, xRatio, yRatio, x1, y1, x2, y2) {\n    let xLerp1 = (value[y1][x2] - value[y1][x1]) * xRatio + value[y1][x1];\n    let xLerp2 = (value[y2][x2] - value[y2][x1]) * xRatio + value[y2][x1];\n    return (xLerp2 - xLerp1) * yRatio + xLerp1;\n}\n\n// Example data received from MQTT\nlet image = msg.payload.split(\",\");\n\n// Convert 1D array to 2D array (8x8 matrix)\nlet matrix8x8 = [];\nfor (let i = 0; i < 8; i++) {\n    matrix8x8.push(image.slice(i * 8, i * 8 + 8).map(parseFloat));\n}\n\n// Expand to 28x28\nlet matrix28x28 = expand8x8to28x28(matrix8x8);\n\n// Auto calculate min and max\nMINTEMP = 15;\nMAXTEMP = 100;\nfor (let i = 0; i < 28; i++) {\n    for (let j = 0; j < 28; j++) {\n        let value = matrix28x28[i][j];\n        if (value < MINTEMP) { MINTEMP = value; }\n        if (value > MAXTEMP) { MAXTEMP = value; }\n    }\n}\nif (MAXTEMP - MINTEMP < 10) { MAXTEMP = MINTEMP + 10.0; }\n\n// Generate HTML table\nlet html = \"<table border=\\\"0\\\" cellpadding=\\\"0\\\" cellspacing=\\\"0\\\" style=\\\"border-collapse:collapse;\\\">\";\nfor (let i = 0; i < 28; i++) {\n    html += \"<tr>\";\n    for (let j = 0; j < 28; j++) {\n        let temp = matrix28x28[i][j];\n        let color = interpolateColor(temp, MINTEMP, MAXTEMP, camColors);\n        html += `<td bgcolor=\"${color}\" width=\"10px\" height=\"10px\" align=\"center\" valign=\"middle\"><font size=\"2\" color=\"#CCCCCC\"></font></td>`;\n    }\n    html += \"</tr>\";\n}\nhtml += \"</table>\";\n\nmsg.payload = html;\n\nreturn [msg, { \"payload\": MINTEMP }, { \"payload\": MAXTEMP }];\n",
+        "outputs": 3,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 460,
+        "wires": [
+            [
+                "a3c4087e.bc2c28",
+                "ce18a3aa.bdd22"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "a3c4087e.bc2c28",
+        "type": "debug",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 650,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "ce18a3aa.bdd22",
+        "type": "ui_template",
+        "z": "948243a3.6a4c2",
+        "group": "0ba1754e264d1648",
+        "name": "",
+        "order": 1,
+        "width": "6",
+        "height": "5",
+        "format": "<html>\n\n<head>\n    <style>\n        .center-container {\n            display: flex;\n            justify-content: center;\n            align-items: center;\n            height: 30vh;\n            /* Điều chỉnh chiều cao khung hình theo yêu cầu */\n        }\n\n        .center-content {\n            text-align: center;\n        }\n    </style>\n</head>\n\n<body>\n    <div class=\"center-container\">\n        <div ng-bind-html=\"msg.payload\" class=\"center-content\"></div>\n    </div>\n</body>\n\n</html>",
+        "storeOutMessages": true,
+        "fwdInMessages": false,
+        "resendOnRefresh": false,
+        "templateScope": "local",
+        "className": "",
+        "x": 660,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "305b5b3.715b4a4",
+        "type": "mqtt in",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "topic": "home/sensor/dht",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "f8e2cb589717620c",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 980,
+        "y": 400,
+        "wires": [
+            [
+                "8b04d5df.c30948"
+            ]
+        ]
+    },
+    {
+        "id": "174906f2.bea8d9",
+        "type": "debug",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1350,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "8b04d5df.c30948",
+        "type": "json",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 1150,
+        "y": 400,
+        "wires": [
+            [
+                "174906f2.bea8d9",
+                "e6a43d386f08f1a7",
+                "8e147829280311fc"
+            ]
+        ]
+    },
+    {
+        "id": "e6a43d386f08f1a7",
+        "type": "ui_gauge",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "group": "d4ead3b9a3d9d198",
+        "order": 2,
+        "width": "3",
+        "height": "3",
+        "gtype": "gage",
+        "title": "Temperature",
+        "label": "units",
+        "format": "{{msg.payload.temperature}} C",
+        "min": 0,
+        "max": "100",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1350,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "8e147829280311fc",
+        "type": "ui_gauge",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "group": "d4ead3b9a3d9d198",
+        "order": 3,
+        "width": "3",
+        "height": "3",
+        "gtype": "gage",
+        "title": "Humidity",
+        "label": "units",
+        "format": "{{msg.payload.humidity}} %",
+        "min": 0,
+        "max": "100",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 1340,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "c0f81119.2fa26",
+        "type": "mqtt in",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "topic": "home/bat",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "f8e2cb589717620c",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 100,
+        "y": 620,
+        "wires": [
+            [
+                "9b699347595dcbce"
+            ]
+        ]
+    },
+    {
+        "id": "6ca67c67.5158f4",
+        "type": "debug",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 510,
+        "y": 620,
+        "wires": []
+    },
+    {
+        "id": "9b699347595dcbce",
+        "type": "json",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 290,
+        "y": 620,
+        "wires": [
+            [
+                "6ca67c67.5158f4",
+                "38b26353a1c104cc"
+            ]
+        ]
+    },
+    {
+        "id": "38b26353a1c104cc",
+        "type": "ui_gauge",
+        "z": "948243a3.6a4c2",
+        "name": "",
+        "group": "0ba1754e264d1648",
+        "order": 2,
+        "width": "2",
+        "height": "2",
+        "gtype": "gage",
+        "title": "BAT",
+        "label": "units",
+        "format": "{{msg.payload.battery}} %",
+        "min": 0,
+        "max": "100",
+        "colors": [
+            "#e01b24",
+            "#e6e600",
+            "#33d17a"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 510,
+        "y": 700,
+        "wires": [],
+        "icon": "font-awesome/fa-battery"
+    },
+    {
+        "id": "2bab630f8af5ee0b",
+        "type": "ui_iframe",
+        "z": "948243a3.6a4c2",
+        "group": "edc77171.40e6d",
+        "name": "",
+        "order": 0,
+        "width": "6",
+        "height": "6",
+        "url": "http://192.168.89.228/",
+        "origin": "*",
+        "scale": 100,
+        "x": 730,
+        "y": 620,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f8e2cb589717620c",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "broker.emqx.io",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "0ba1754e264d1648",
+        "type": "ui_group",
+        "name": "Thermal",
+        "tab": "3bed3a554a5f1654",
+        "order": 2,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "d4ead3b9a3d9d198",
+        "type": "ui_group",
+        "name": "Environment",
+        "tab": "3bed3a554a5f1654",
+        "order": 4,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "edc77171.40e6d",
+        "type": "ui_group",
+        "name": "Camera",
+        "tab": "3bed3a554a5f1654",
+        "order": 3,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "3bed3a554a5f1654",
+        "type": "ui_tab",
+        "name": "HOME",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]
